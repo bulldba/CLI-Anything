@@ -196,7 +196,7 @@
       "homepage": "https://github.com/PiaoyangGuohai1/cli-anything-zotero",
       "install_cmd": "pip install cli-anything-zotero",
       "entry_point": "cli-anything-zotero",
-      "skill_md": "zotero/agent-harness/cli_anything/zotero/skills/SKILL.md",
+      "skill_md": null,
       "category": "office",
       "contributor": "PiaoyangGuohai1",
       "contributor_url": "https://github.com/PiaoyangGuohai1"
