@@ -318,14 +318,6 @@ success "Cleanup suggestions generated"
 section "⚖️  Feature Test 6: Model Comparison"
 
 info "Comparing metrics between first two models..."
-echo ""
-echo "Debug: Checking if models have metrics..."
-python -m cli_anything.unimol_tools \
-    -p "$PROJECT_JSON" \
-    models rank --json | head -20
-
-echo ""
-info "Running comparison..."
 python -m cli_anything.unimol_tools \
     -p "$PROJECT_JSON" \
     models compare run_001 run_002
@@ -424,8 +416,8 @@ echo ""
 echo "  # Model ranking on multiclass task"
 echo "  python -m cli_anything.unimol_tools -p $PROJECT_DIR/task3_multiclass/project.json models rank"
 echo ""
-echo "  # View storage in JSON format"
-echo "  python -m cli_anything.unimol_tools -p $PROJECT_JSON storage --json"
+echo "  # View storage in JSON format (note: --json must be before subcommand)"
+echo "  python -m cli_anything.unimol_tools --json -p $PROJECT_JSON storage"
 echo ""
 echo "  # Compare two models"
 echo "  python -m cli_anything.unimol_tools -p $PROJECT_JSON models compare run_001 run_002"

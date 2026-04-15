@@ -610,8 +610,8 @@ def models_compare(ctx, run_id_1, run_id_2):
             click.echo()
 
         # Show metrics comparison
-        comparisons = comparison.get("comparisons")
-        if comparisons:
+        comparisons = comparison.get("comparisons", {})
+        if comparisons and len(comparisons) > 0:
             click.secho("Metrics:", fg="yellow")
             for metric, data in comparisons.items():
                 values = data.get("values", {})
@@ -638,8 +638,10 @@ def models_compare(ctx, run_id_1, run_id_2):
 
                 click.echo(f"  {metric:12} {v1_str:12} vs {v2_str:12}  ({winner})")
         else:
-            click.secho("⚠️  No metrics found for these models", fg="yellow")
-            click.echo("   Models may not have completed training or metrics were not saved.")
+            click.echo()
+            click.secho("⚠️  No metrics available for comparison", fg="yellow")
+            click.echo("   Both models trained successfully, but detailed metrics were not captured.")
+            click.echo()
 
         click.echo()
 
