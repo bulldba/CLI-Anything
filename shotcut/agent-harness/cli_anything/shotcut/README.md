@@ -7,7 +7,6 @@ without a GUI.
 ## Prerequisites
 
 - Python 3.10+
-- `lxml` (XML manipulation)
 - `click` (CLI framework)
 
 Optional (for interactive REPL):
@@ -20,7 +19,7 @@ Optional (for rendering/media probing):
 ## Install Dependencies
 
 ```bash
-pip install lxml click prompt_toolkit
+pip install click prompt_toolkit
 ```
 
 ## How to Run
@@ -74,7 +73,7 @@ timeline show                                       # Visual timeline overview
 timeline tracks                                     # List all tracks
 timeline add-track --type <video|audio> [--name N]  # Add track
 timeline remove-track <index>                       # Remove track
-timeline add-clip <file> --track <n> [--in tc] [--out tc]  # Add clip
+timeline add-clip <clip_id> --track <n> [--in tc] [--out tc] [--at tc]  # Add clip
 timeline remove-clip <track> <clip> [--no-ripple]   # Remove clip
 timeline move-clip <track> <clip> --to-track <n>    # Move clip
 timeline trim <track> <clip> [--in tc] [--out tc]   # Trim clip
@@ -95,6 +94,8 @@ filter add <name> [--track n] [--clip n] [--param k=v ...]  # Apply filter
 filter remove <index> [--track n] [--clip n]                 # Remove filter
 filter set <index> <param> <value> [--track n] [--clip n]   # Set param
 filter list [--track n] [--clip n]                           # List active filters
+filter volume-envelope [--track n] [--clip n] --point TIME=LEVEL ...  # Volume envelope
+filter duck [--track n] [--clip n] --window START..END ...   # Ducking envelope
 ```
 
 ### Transitions
@@ -128,8 +129,9 @@ Available blend modes: `normal`, `add`, `multiply`, `screen`, `overlay`, `darken
 ### Media
 
 ```bash
-media probe <file>                                 # Analyze media file
+media import <file> [--caption name]               # Import media into project bin
 media list                                         # List media in project
+media probe <file>                                 # Analyze media file
 media check                                        # Check all files exist
 media thumbnail <file> -o <output> [--time tc]     # Extract thumbnail
 ```
@@ -190,12 +192,20 @@ python3 -m cli.shotcut_cli project new --profile hd1080p30 -o edit.mlt
 python3 -m cli.shotcut_cli --project edit.mlt timeline add-track --type video --name "Main"
 python3 -m cli.shotcut_cli --project edit.mlt timeline add-track --type audio --name "Music"
 
-# Add clips (assuming media files exist)
-python3 -m cli.shotcut_cli --project edit.mlt timeline add-clip intro.mp4 --track 1 --in 00:00:00.000 --out 00:00:05.000
-python3 -m cli.shotcut_cli --project edit.mlt timeline add-clip main.mp4 --track 1 --in 00:00:00.000 --out 00:00:30.000
+# Import media files into the project bin
+python3 -m cli.shotcut_cli --project edit.mlt media import intro.mp4
+python3 -m cli.shotcut_cli --project edit.mlt media import main.mp4
+
+# Add clips to the timeline by clip_id
+python3 -m cli.shotcut_cli --project edit.mlt timeline add-clip clip0 --track 1 --in 00:00:00.000 --out 00:00:05.000
+python3 -m cli.shotcut_cli --project edit.mlt timeline add-clip clip1 --track 1 --in 00:00:00.000 --out 00:00:30.000 --at 00:00:08.000
 
 # Apply a brightness filter to the first clip
 python3 -m cli.shotcut_cli --project edit.mlt filter add brightness --track 1 --clip 0 --param level=1.3
+
+# Duck the music during narration
+python3 -m cli.shotcut_cli --project edit.mlt filter duck --track 2 \
+  --window 00:00:00.000:00:00:05.000 --duck 0.2
 
 # View the timeline
 python3 -m cli.shotcut_cli --project edit.mlt timeline show
