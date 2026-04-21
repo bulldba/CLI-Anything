@@ -9,6 +9,9 @@ from typing import Any, Dict, List, Optional
 
 from cli_anything.lldb.utils.lldb_backend import ensure_lldb_importable
 
+MEMORY_FIND_MAX_SCAN_SIZE = 1024 * 1024
+MEMORY_FIND_CHUNK_SIZE = 64 * 1024
+
 
 class LLDBSession:
     """Encapsulates one LLDB debugger session using Python API only."""
@@ -62,13 +65,9 @@ class LLDBSession:
 
     def attach_pid(self, pid: int) -> Dict[str, Any]:
         self._require_target()
-        error = self._lldb.SBError()
-        listener = self.debugger.GetListener()
-        self.process = self.target.AttachToProcessWithID(listener, pid, error)
-        if not error.Success():
-            raise RuntimeError(f"Attach failed: {error}")
-        self._process_origin = "attached"
-        return self._process_info()
+        attach_info = self._lldb.SBAttachInfo()
+        attach_info.SetProcessID(pid)
+        return self._attach(attach_info)
 
     def attach_name(self, name: str, wait_for: bool = False) -> Dict[str, Any]:
         self._require_target()
@@ -76,12 +75,15 @@ class LLDBSession:
         attach_info.SetExecutable(name)
         if wait_for:
             attach_info.SetWaitForLaunch(True, False)
+        return self._attach(attach_info)
+
+    def _attach(self, attach_info) -> Dict[str, Any]:
         error = self._lldb.SBError()
         self.process = self.target.Attach(attach_info, error)
         if not error.Success():
             raise RuntimeError(f"Attach failed: {error}")
         self._process_origin = "attached"
-        return self._process_info()
+        return self.process_info()
 
     def launch(
         self,
@@ -94,7 +96,7 @@ class LLDBSession:
         if not self.process or not self.process.IsValid():
             raise RuntimeError("Launch failed")
         self._process_origin = "launched"
-        return self._process_info()
+        return self.process_info()
 
     def detach(self) -> Dict[str, Any]:
         self._require_process()
@@ -175,6 +177,9 @@ class LLDBSession:
     def continue_exec(self) -> Dict[str, Any]:
         self._require_process()
         self.process.Continue()
+        return self.process_info()
+
+    def process_info(self) -> Dict[str, Any]:
         return self._process_info()
 
     def backtrace(self, limit: int = 50) -> Dict[str, Any]:
@@ -276,13 +281,71 @@ class LLDBSession:
             "hex": data.hex(),
         }
 
+    def find_memory(
+        self,
+        needle: str,
+        start_address: int,
+        size: int,
+        *,
+        chunk_size: int = MEMORY_FIND_CHUNK_SIZE,
+        max_scan_size: int = MEMORY_FIND_MAX_SCAN_SIZE,
+    ) -> Dict[str, Any]:
+        self._require_process()
+        if not needle:
+            raise ValueError("Needle must not be empty")
+        if size <= 0:
+            raise ValueError("Scan size must be positive")
+        if size > max_scan_size:
+            raise ValueError(
+                f"Scan size exceeds max supported scan size ({max_scan_size} bytes)"
+            )
+        if chunk_size <= 0:
+            raise ValueError("Chunk size must be positive")
+
+        needle_bytes = needle.encode("utf-8")
+        overlap = max(0, len(needle_bytes) - 1)
+        remaining = size
+        current = start_address
+        trailing = b""
+
+        while remaining > 0:
+            read_size = min(chunk_size, remaining)
+            chunk = bytes.fromhex(self.read_memory(current, read_size)["hex"])
+            haystack = trailing + chunk
+            idx = haystack.find(needle_bytes)
+            if idx >= 0:
+                base = current - len(trailing)
+                return {
+                    "needle": needle,
+                    "start": hex(start_address),
+                    "size": size,
+                    "found": True,
+                    "address": hex(base + idx),
+                    "chunk_size": chunk_size,
+                    "max_scan_size": max_scan_size,
+                }
+
+            trailing = haystack[-overlap:] if overlap else b""
+            current += read_size
+            remaining -= read_size
+
+        return {
+            "needle": needle,
+            "start": hex(start_address),
+            "size": size,
+            "found": False,
+            "address": None,
+            "chunk_size": chunk_size,
+            "max_scan_size": max_scan_size,
+        }
+
     def load_core(self, core_path: str) -> Dict[str, Any]:
         self._require_target()
         self.process = self.target.LoadCore(core_path)
         if not self.process or not self.process.IsValid():
             raise RuntimeError(f"Failed to load core: {core_path}")
         self._process_origin = "core"
-        return self._process_info()
+        return self.process_info()
 
     def destroy(self):
         if self.process and self.process.IsValid():

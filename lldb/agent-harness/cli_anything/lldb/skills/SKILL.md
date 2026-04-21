@@ -94,9 +94,10 @@ cli-anything-lldb --json core load --path /path/to/core
 ## Agent Usage Notes
 
 - Prefer `--json` for all automated flows.
-- Commands are stateless between separate process invocations.
-- Use REPL for persistent state:
+- Non-REPL commands share state across separate invocations through the persistent session daemon until you run `session close` or the idle timeout expires.
+- Use REPL when you want an interactive long-running debugger session:
   - run `cli-anything-lldb`
   - execute multi-step commands in one session
+- `memory find` uses a chunked scan capped at 1 MiB per call.
 - Call `target create` before process or core commands.
 - Expect structured errors: `{"error": "...", "type": "..."}`

@@ -96,9 +96,9 @@ python -m pytest cli_anything/lldb/tests -q
 
 ### Result summary
 
-- `test_core.py`: 18 passed
+- `test_core.py`: 23 passed
 - `test_full_e2e.py`: 4 passed
-- combined: 22 passed
+- combined: 27 passed
 
 ### Notes
 
@@ -107,4 +107,6 @@ python -m pytest cli_anything/lldb/tests -q
 - Fixed REPL fallback behavior for non-interactive subprocess execution on Windows
 - Fixed Windows REPL command parsing so quoted paths and inherited `--json` mode work correctly
 - Added a persistent background LLDB session so non-REPL commands can share debugger state
+- Switched the session daemon to a localhost JSON socket protocol with owner-scoped state file permissions
+- `memory find` now uses a chunked scan capped at 1 MiB per call
 - Fixed cleanup to detach attached inferiors instead of killing them on session shutdown

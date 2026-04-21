@@ -4,17 +4,19 @@ Client-side helpers for the persistent LLDB session daemon.
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import os
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import time
-from multiprocessing.connection import Client
 from pathlib import Path
 from typing import Any
+
+MAX_MESSAGE_BYTES = 1024 * 1024
 
 
 def resolve_session_file(explicit: str | None = None) -> Path:
@@ -31,14 +33,67 @@ def resolve_session_file(explicit: str | None = None) -> Path:
     return (root / f"session-{digest}.json").resolve()
 
 
+def _validate_state_file(state_file: Path):
+    stat_result = state_file.stat()
+    if os.name != "nt":
+        if stat_result.st_uid != os.getuid():
+            raise RuntimeError(
+                f"Refusing to use session state file not owned by the current user: {state_file}"
+            )
+        if stat_result.st_mode & 0o077:
+            raise RuntimeError(f"Session state file permissions are too broad: {state_file}")
+
+
 def _load_state_file(state_file: Path) -> dict[str, Any]:
+    _validate_state_file(state_file)
     return json.loads(state_file.read_text(encoding="utf-8"))
 
 
-def _connect(state_file: Path):
+def _recv_exact(conn: socket.socket, size: int) -> bytes:
+    chunks = bytearray()
+    while len(chunks) < size:
+        chunk = conn.recv(size - len(chunks))
+        if not chunk:
+            raise ConnectionError("Unexpected EOF while reading response")
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def _recv_message(conn: socket.socket) -> dict[str, Any]:
+    header = _recv_exact(conn, 4)
+    message_size = struct.unpack("!I", header)[0]
+    if message_size <= 0 or message_size > MAX_MESSAGE_BYTES:
+        raise ValueError(f"Invalid message size: {message_size}")
+    payload = _recv_exact(conn, message_size)
+    message = json.loads(payload.decode("utf-8"))
+    if not isinstance(message, dict):
+        raise ValueError("Response payload must be a JSON object")
+    return message
+
+
+def _send_message(conn: socket.socket, payload: dict[str, Any]):
+    raw = json.dumps(payload).encode("utf-8")
+    if len(raw) > MAX_MESSAGE_BYTES:
+        raise ValueError("Request payload is too large")
+    conn.sendall(struct.pack("!I", len(raw)))
+    conn.sendall(raw)
+
+
+def _request(state_file: Path, method: str, *args, **kwargs):
     state = _load_state_file(state_file)
-    authkey = base64.b64decode(state["authkey"])
-    return Client((state["host"], state["port"]), authkey=authkey)
+    token = state.get("token")
+    if not isinstance(token, str) or not token:
+        raise RuntimeError(f"Session state file is missing a valid token: {state_file}")
+
+    with socket.create_connection((state["host"], state["port"]), timeout=5.0) as conn:
+        payload = {
+            "token": token,
+            "method": method,
+            "args": list(args),
+            "kwargs": kwargs,
+        }
+        _send_message(conn, payload)
+        return _recv_message(conn)
 
 
 def _spawn_server(state_file: Path):
@@ -64,9 +119,7 @@ def _spawn_server(state_file: Path):
 def ensure_server(state_file: Path, timeout: float = 10.0):
     if state_file.exists():
         try:
-            with _connect(state_file) as conn:
-                conn.send({"method": "ping", "args": [], "kwargs": {}})
-                response = conn.recv()
+            response = _request(state_file, "ping")
             if response.get("ok"):
                 return
         except Exception:
@@ -80,9 +133,7 @@ def ensure_server(state_file: Path, timeout: float = 10.0):
     while time.time() < deadline:
         if state_file.exists():
             try:
-                with _connect(state_file) as conn:
-                    conn.send({"method": "ping", "args": [], "kwargs": {}})
-                    response = conn.recv()
+                response = _request(state_file, "ping")
                 if response.get("ok"):
                     return
             except Exception:
@@ -99,9 +150,7 @@ class RemoteLLDBSessionProxy:
 
     def call(self, method: str, *args, **kwargs):
         ensure_server(self._state_file)
-        with _connect(self._state_file) as conn:
-            conn.send({"method": method, "args": list(args), "kwargs": kwargs})
-            response = conn.recv()
+        response = _request(self._state_file, method, *args, **kwargs)
         if response.get("ok"):
             return response.get("data")
         raise RuntimeError(response.get("error") or f"Remote call failed: {method}")

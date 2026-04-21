@@ -65,6 +65,10 @@ such as `target create`, `breakpoint set`, `process launch`, and follow-up
 inspection commands can run as separate CLI invocations against the same live
 debugger state.
 
+The persistent session daemon now speaks a localhost JSON socket protocol and
+stores its session token in an owner-scoped state file. `memory find` scans in
+64 KiB chunks and caps each request at 1 MiB.
+
 ## Command Groups
 
 - `target`: `create`, `info`
@@ -98,3 +102,4 @@ pytest cli_anything/lldb/tests/test_full_e2e.py -v
 E2E tests require:
 - a working C compiler (`clang`, `gcc`, or `cc`) so the tests can build a small debug helper
 - no extra env vars for the default suite; `LLDB_TEST_CORE` is optional if you want to point the negative-path core-load check at a specific local file
+- `memory find` scans are chunked and capped at 1 MiB per invocation

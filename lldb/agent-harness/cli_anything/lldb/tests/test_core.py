@@ -141,6 +141,38 @@ class TestCLIJsonErrors:
         assert "error" in data
 
     @patch("cli_anything.lldb.lldb_cli._get_session")
+    def test_thread_info_no_selected_thread_json(self, mock_get_session):
+        from cli_anything.lldb.lldb_cli import cli
+
+        fake_session = MagicMock()
+        fake_session.session_status.return_value = {"has_target": True, "has_process": True}
+        fake_session.threads.return_value = {"threads": [{"id": 1, "selected": False}]}
+        mock_get_session.return_value = fake_session
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--json", "thread", "info"])
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["error"] == "No selected thread"
+
+    @patch("cli_anything.lldb.lldb_cli._get_session")
+    def test_process_info_uses_public_session_api(self, mock_get_session):
+        from cli_anything.lldb.lldb_cli import cli
+
+        fake_session = MagicMock()
+        fake_session.session_status.return_value = {"has_target": True, "has_process": True}
+        fake_session.process_info.return_value = {"pid": 1234, "state": "stopped", "num_threads": 1}
+        fake_session._process_info.side_effect = AssertionError("private API should not be used")
+        mock_get_session.return_value = fake_session
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--json", "process", "info"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["pid"] == 1234
+        fake_session.process_info.assert_called_once_with()
+
+    @patch("cli_anything.lldb.lldb_cli._get_session")
     def test_process_info_no_process_json(self, mock_get_session):
         from cli_anything.lldb.lldb_cli import cli
 
@@ -237,6 +269,57 @@ class TestSessionLifecycle:
         assert status["has_target"] is True
         assert status["has_process"] is True
         assert status["process_origin"] == "attached"
+
+    def test_process_info_public_wrapper(self):
+        from cli_anything.lldb.core.session import LLDBSession
+
+        session = self._make_session()
+        process = MagicMock()
+        process.IsValid.return_value = True
+        process.GetProcessID.return_value = 77
+        process.GetState.return_value = 5
+        process.GetNumThreads.return_value = 2
+        session.process = process
+
+        data = LLDBSession.process_info(session)
+
+        assert data == {"pid": 77, "state": "stopped", "num_threads": 2}
+
+    def test_find_memory_scans_in_chunks(self):
+        from cli_anything.lldb.core.session import LLDBSession
+
+        session = self._make_session()
+        process = MagicMock()
+        process.IsValid.return_value = True
+        session.process = process
+
+        haystack = b"abcneedlexyz"
+        start = 0x1000
+
+        def fake_read_memory(address: int, size: int):
+            offset = address - start
+            return {"hex": haystack[offset : offset + size].hex()}
+
+        session.read_memory = MagicMock(side_effect=fake_read_memory)
+
+        data = LLDBSession.find_memory(session, "needle", start, len(haystack), chunk_size=5)
+
+        assert data["found"] is True
+        assert data["address"] == hex(start + 3)
+        assert session.read_memory.call_count >= 2
+
+    def test_find_memory_rejects_oversized_scan(self):
+        from cli_anything.lldb.core.session import LLDBSession, MEMORY_FIND_MAX_SCAN_SIZE
+
+        session = self._make_session()
+        process = MagicMock()
+        process.IsValid.return_value = True
+        session.process = process
+
+        with pytest.raises(ValueError) as exc:
+            LLDBSession.find_memory(session, "needle", 0x1000, MEMORY_FIND_MAX_SCAN_SIZE + 1)
+
+        assert "max supported scan size" in str(exc.value)
 
 
 class TestCLISubprocess:

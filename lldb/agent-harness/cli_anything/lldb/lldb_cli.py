@@ -11,6 +11,7 @@ import shlex
 from typing import Optional
 
 import click
+from cli_anything.lldb.core.session import MEMORY_FIND_MAX_SCAN_SIZE
 
 _session = None  # type: ignore
 _session_file = None
@@ -248,7 +249,7 @@ def process_detach(ctx):
 def process_info(ctx):
     """Show process status."""
     try:
-        data = _require_process()._process_info()
+        data = _require_process().process_info()
         _output(ctx, data)
     except Exception as exc:
         _handle_exc(ctx, exc)
@@ -383,7 +384,9 @@ def thread_info(ctx):
     try:
         threads = _require_process().threads().get("threads", [])
         selected = next((t for t in threads if t.get("selected")), None)
-        _output(ctx, selected or {"error": "No selected thread"})
+        if selected is None:
+            raise RuntimeError("No selected thread")
+        _output(ctx, selected)
     except Exception as exc:
         _handle_exc(ctx, exc)
 
@@ -520,22 +523,18 @@ def memory_read(ctx, address: str, size: int):
 @memory_group.command("find")
 @click.argument("needle", required=True, type=str)
 @click.option("--start", "start_addr", required=True, type=str, help="Start address (hex/int).")
-@click.option("--size", required=True, type=int, help="Scan size in bytes.")
+@click.option(
+    "--size",
+    required=True,
+    type=int,
+    help=f"Scan size in bytes (chunked scan, max {MEMORY_FIND_MAX_SCAN_SIZE} bytes).",
+)
 @click.pass_context
 def memory_find(ctx, needle: str, start_addr: str, size: int):
-    """Find ASCII needle in memory region (naive scan)."""
+    """Find a UTF-8 needle in memory using a chunked scan."""
     try:
         addr_val = _parse_int(start_addr)
-        chunk = _require_process().read_memory(addr_val, size)
-        raw = bytes.fromhex(chunk["hex"])
-        idx = raw.find(needle.encode("utf-8"))
-        data = {
-            "needle": needle,
-            "start": hex(addr_val),
-            "size": size,
-            "found": idx >= 0,
-            "address": hex(addr_val + idx) if idx >= 0 else None,
-        }
+        data = _require_process().find_memory(needle, addr_val, size)
         _output(ctx, data)
     except Exception as exc:
         _handle_exc(ctx, exc)
