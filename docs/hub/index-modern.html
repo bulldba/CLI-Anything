@@ -2909,18 +2909,78 @@
         document.addEventListener(evt, onHumanInteraction, { once: false, passive: true });
       });
 
+      // ── Live analytics (PostHog HogQL) ──
+      // Read-only personal API key, scoped to `query:read` on project 393992 only.
+      // See https://us.posthog.com/settings/user-api-keys.
+      const POSTHOG_READONLY_KEY = 'phx_FizBjpYkycqd7b9UC2ZebHNhze6gn8T9SmUv5uG8dXXLepHj';
+      const POSTHOG_QUERY_HOST = 'https://us.posthog.com';
+      const POSTHOG_QUERY_PROJECT_ID = '393992';
+      const MIGRATION_STARTED_AT = '2026-04-23T09:06:38Z';
+      const LIVE_STATS_REFRESH_MS = 60_000;
+
+      async function fetchPosthogIncrement() {
+        if (!POSTHOG_READONLY_KEY || POSTHOG_READONLY_KEY.indexOf('REPLACE') !== -1) {
+          throw new Error('posthog readonly key not configured');
+        }
+        const hogql = (
+          "select " +
+          "countIf(event = 'visit-human' and properties.source = 'web' and properties.site = 'clianything.cc') as human, " +
+          "countIf(event = 'visit-agent' and properties.source = 'web' and properties.site = 'clianything.cc') as agent, " +
+          "countIf(event = 'cli-hub call' and properties.source = 'cli' and properties.channel = 'cli-hub' and properties.is_agent = false) as cli_hub_human, " +
+          "countIf(event = 'cli-hub call' and properties.source = 'cli' and properties.channel = 'cli-hub' and properties.is_agent = true) as cli_hub_agent " +
+          "from events " +
+          "where timestamp >= parseDateTimeBestEffort('" + MIGRATION_STARTED_AT + "')"
+        );
+        const response = await fetch(POSTHOG_QUERY_HOST + '/api/projects/' + POSTHOG_QUERY_PROJECT_ID + '/query/', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + POSTHOG_READONLY_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query: { kind: 'HogQLQuery', query: hogql } }),
+        });
+        if (!response.ok) throw new Error('posthog query http ' + response.status);
+        const data = await response.json();
+        const row = (data.results && data.results[0]) || [0, 0, 0, 0];
+        const human = Number(row[0]) || 0;
+        const agent = Number(row[1]) || 0;
+        const cliHuman = Number(row[2]) || 0;
+        const cliAgent = Number(row[3]) || 0;
+        return {
+          total: human + agent,
+          human,
+          agent,
+          cli_hub_total: cliHuman + cliAgent,
+          cli_hub_human: cliHuman,
+          cli_hub_agent: cliAgent,
+        };
+      }
+
+      function mergeStats(baseline, increment) {
+        return {
+          total: baseline.total + increment.total,
+          human: baseline.human + increment.human,
+          agent: baseline.agent + increment.agent,
+          cli_hub_total: baseline.cli_hub_total + increment.cli_hub_total,
+          cli_hub_human: baseline.cli_hub_human + increment.cli_hub_human,
+          cli_hub_agent: baseline.cli_hub_agent + increment.cli_hub_agent,
+        };
+      }
+
+      async function refreshVisitorStats() {
+        try {
+          const increment = await fetchPosthogIncrement();
+          applyVisitorStats(mergeStats(BASELINE_STATS, increment));
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
       async function loadVisitorStats() {
         applyVisitorStats(BASELINE_STATS);
-        try {
-          const response = await fetch('./analytics-stats.json', { cache: 'no-store' });
-          if (!response.ok) return;
-          const stats = await response.json();
-          if (stats && stats.totals) {
-            applyVisitorStats(stats.totals);
-          }
-        } catch (_) {
-          // Fall back to the fixed baseline values.
-        }
+        await refreshVisitorStats();
+        setInterval(refreshVisitorStats, LIVE_STATS_REFRESH_MS);
       }
 
       loadVisitorStats();
